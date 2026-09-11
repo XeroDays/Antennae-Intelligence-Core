@@ -1,0 +1,12 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Run Antennae Core",
+      "type": "node-terminal",
+      "request": "launch",
+      "command": "cmd.exe /c run.bat --no-pause",
+      "cwd": "${workspaceFolder}"
+    }
+  ]
+}

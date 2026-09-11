@@ -1,0 +1,34 @@
+Antennae Core - Project Notes
+==============================
+
+Setup
+-----
+1. Double-click run.bat (or run it from a terminal).
+2. run.bat will:
+   - Create a virtual environment in the "venv" folder (if it does not exist).
+   - Activate the virtual environment.
+   - Install packages from requirements.txt.
+   - Run start.py.
+
+Manual setup (optional)
+-----------------------
+  python -m venv venv
+  venv\Scripts\activate
+  pip install -r requirements.txt
+  python start.py
+
+Run from Cursor / VS Code
+-------------------------
+1. Open the Run and Debug panel (play icon on the left sidebar).
+2. Select "Run Antennae Core" at the top.
+3. Click the green Play button.
+
+This runs run.bat (creates venv, installs requirements, starts start.py).
+
+Files
+-----
+  start.py          - Main entry point (dummy for now).
+  requirements.txt  - Python package dependencies.
+  run.bat           - One-click setup and run script.
+  note.txt          - This file.
+  .vscode/launch.json - Play button runs run.bat.
