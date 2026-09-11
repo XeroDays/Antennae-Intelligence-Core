@@ -10,6 +10,7 @@ import numpy as np
 from PIL import Image, ImageTk
 
 from hand_tracker import HandTracker
+from volume_controller import VolumeController
 
 
 QUALITY_OPTIONS = {
@@ -17,6 +18,9 @@ QUALITY_OPTIONS = {
     "720p (1280x720)": (1280, 720),
     "1080p (1920x1080)": (1920, 1080),
 }
+
+# Moving hands 50% of frame width apart = +100% volume swing.
+VOLUME_SENSITIVITY = 2.0
 
 
 class HandGestureApp(tk.Tk):
@@ -30,9 +34,12 @@ class HandGestureApp(tk.Tk):
         self.configure(bg="#1e1e1e")
 
         self.tracker = HandTracker()
+        self.volume_ctrl = VolumeController()
         self.cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)
         self._photo_image: ImageTk.PhotoImage | None = None
         self._running = True
+        self._vol_baseline_dist: float | None = None
+        self._vol_baseline_volume: float | None = None
 
         self._build_ui()
         self._apply_camera_quality(self.quality_var.get())
@@ -89,12 +96,36 @@ class HandGestureApp(tk.Tk):
             hand_results = self.tracker.process(frame)
             frame = self.tracker.draw(frame, hand_results)
 
-            if hand_results:
+            raw_dist = self.tracker.draw_volume_bridge(frame, hand_results)
+            if raw_dist is not None:
+                if self._vol_baseline_dist is None:
+                    self._vol_baseline_dist = raw_dist
+                    self._vol_baseline_volume = self.volume_ctrl.get_volume()
+
+                delta = raw_dist - self._vol_baseline_dist
+                new_volume = self._vol_baseline_volume + (delta * VOLUME_SENSITIVITY)
+                self.volume_ctrl.set_volume(new_volume)
+
+                frame = self._draw_volume_bar(frame, self.volume_ctrl.get_smoothed_level())
+                volume_percent = int(self.volume_ctrl.get_smoothed_level() * 100)
+                status = f"Volume control active | VOL {volume_percent}%"
+                if hand_results:
+                    labels = ", ".join(
+                        f"{hand.handedness}: {hand.gesture}" for hand in hand_results
+                    )
+                    self.status_var.set(f"{status} | {labels}")
+                else:
+                    self.status_var.set(status)
+            else:
+                self._vol_baseline_dist = None
+                self._vol_baseline_volume = None
+
+            if raw_dist is None and hand_results:
                 labels = ", ".join(
                     f"{hand.handedness}: {hand.gesture}" for hand in hand_results
                 )
                 self.status_var.set(labels)
-            else:
+            elif raw_dist is None:
                 width = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
                 height = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
                 self.status_var.set(f"Camera: {width}x{height} | No hands detected")
@@ -104,6 +135,40 @@ class HandGestureApp(tk.Tk):
             self.status_var.set("Failed to read from camera.")
 
         self.after(15, self._update_frame)
+
+    def _draw_volume_bar(self, frame: np.ndarray, level: float) -> np.ndarray:
+        """Draw a vertical volume bar on the right side of the frame."""
+        output = frame.copy()
+        frame_height, frame_width = output.shape[:2]
+
+        bar_width = 24
+        bar_height = int(frame_height * 0.45)
+        margin = 20
+        x1 = frame_width - margin - bar_width
+        y1 = int((frame_height - bar_height) / 2)
+        x2 = x1 + bar_width
+        y2 = y1 + bar_height
+
+        cv2.rectangle(output, (x1, y1), (x2, y2), (40, 40, 40), -1)
+        cv2.rectangle(output, (x1, y1), (x2, y2), (255, 255, 255), 2)
+
+        fill_height = int(bar_height * max(0.0, min(1.0, level)))
+        if fill_height > 0:
+            fill_y1 = y2 - fill_height
+            cv2.rectangle(output, (x1 + 2, fill_y1), (x2 - 2, y2 - 2), (255, 255, 255), -1)
+
+        label = f"VOL {int(level * 100)}%"
+        cv2.putText(
+            output,
+            label,
+            (x1 - 10, y2 + 28),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.6,
+            (255, 255, 255),
+            2,
+            cv2.LINE_AA,
+        )
+        return output
 
     def _render_frame(self, frame: np.ndarray) -> None:
         canvas_width = max(self.canvas.winfo_width(), 1)

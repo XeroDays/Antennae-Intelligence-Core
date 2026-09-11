@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
@@ -26,6 +27,8 @@ MODEL_URL = (
     "hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task"
 )
 MODEL_PATH = Path(__file__).resolve().parent / "models" / "hand_landmarker.task"
+
+INDEX_FINGER_TIP = 8
 
 
 @dataclass
@@ -109,6 +112,35 @@ class HandTracker:
             self._draw_gesture_label(output, hand, index)
 
         return output
+
+    def draw_volume_bridge(
+        self,
+        frame: np.ndarray,
+        hand_results: list[HandResult],
+    ) -> float | None:
+        """Draw a white line between index fingertips and return raw normalised distance."""
+        if len(hand_results) < 2:
+            return None
+
+        tip_a = hand_results[0].landmarks[INDEX_FINGER_TIP]
+        tip_b = hand_results[1].landmarks[INDEX_FINGER_TIP]
+        point_a = (tip_a.x, tip_a.y)
+        point_b = (tip_b.x, tip_b.y)
+
+        cv2.line(frame, point_a, point_b, (255, 255, 255), 3, cv2.LINE_AA)
+        cv2.circle(frame, point_a, 8, (255, 255, 255), -1, cv2.LINE_AA)
+        cv2.circle(frame, point_b, 8, (255, 255, 255), -1, cv2.LINE_AA)
+
+        midpoint = (
+            (point_a[0] + point_b[0]) // 2,
+            (point_a[1] + point_b[1]) // 2,
+        )
+        cv2.circle(frame, midpoint, 5, (0, 200, 255), -1, cv2.LINE_AA)
+
+        frame_width = max(frame.shape[1], 1)
+        pixel_dist = math.dist(point_a, point_b)
+        normalized_dist = pixel_dist / frame_width
+        return max(0.0, min(1.0, normalized_dist))
 
     def _create_landmarker(self) -> HandLandmarker:
         model_path = self._ensure_model()
