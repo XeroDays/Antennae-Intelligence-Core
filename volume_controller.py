@@ -25,6 +25,12 @@ class VolumeController:
 
         self._volume.SetMasterVolumeLevelScalar(self._smoothed_level, None)
 
+    def set_volume_instant(self, level: float) -> None:
+        """Set master volume immediately without smoothing."""
+        clamped = max(0.0, min(1.0, level))
+        self._smoothed_level = clamped
+        self._volume.SetMasterVolumeLevelScalar(clamped, None)
+
     def get_volume(self) -> float:
         """Return current master volume as a normalized level."""
         return float(self._volume.GetMasterVolumeLevelScalar())

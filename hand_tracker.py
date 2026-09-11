@@ -28,6 +28,18 @@ MODEL_URL = (
 )
 MODEL_PATH = Path(__file__).resolve().parent / "models" / "hand_landmarker.task"
 
+WRIST = 0
+INTERLOCKED_WRIST_MIN = 0.03
+INTERLOCKED_WRIST_THRESHOLD = 0.25
+INTERLOCKED_OVERLAP_THRESHOLD = 0.40
+
+DEFAULT_DETECTION_CONFIDENCE = 0.75
+DEFAULT_PRESENCE_CONFIDENCE = 0.75
+DEFAULT_TRACKING_CONFIDENCE = 0.60
+
+NON_PINCH_FINGERS = ("middle", "ring", "pinky")
+
+
 @dataclass
 class LandmarkPoint:
     x: int
@@ -50,6 +62,9 @@ class HandTracker:
         self._detector = GestureDetector()
         self._connections = HandLandmarksConnections.HAND_CONNECTIONS
         self._frame_timestamp_ms = 0
+        self._detection_confidence = DEFAULT_DETECTION_CONFIDENCE
+        self._presence_confidence = DEFAULT_PRESENCE_CONFIDENCE
+        self._tracking_confidence = DEFAULT_TRACKING_CONFIDENCE
         self._landmarker = self._create_landmarker()
 
     def close(self) -> None:
@@ -58,6 +73,20 @@ class HandTracker:
     def set_pinch_threshold(self, value: float) -> None:
         """Update pinch detection sensitivity."""
         self._detector.set_pinch_threshold(value)
+
+    def reconfigure(
+        self,
+        detection_confidence: float,
+        presence_confidence: float,
+        tracking_confidence: float,
+    ) -> None:
+        """Rebuild the hand landmarker with new confidence thresholds."""
+        self._detection_confidence = detection_confidence
+        self._presence_confidence = presence_confidence
+        self._tracking_confidence = tracking_confidence
+        old_landmarker = self._landmarker
+        self._landmarker = self._create_landmarker()
+        old_landmarker.close()
 
     def process(self, frame: np.ndarray) -> list[HandResult]:
         """Detect hands in a BGR frame and return landmark/gesture results."""
@@ -114,6 +143,36 @@ class HandTracker:
 
         return output
 
+    def detect_and_draw_interlocked(
+        self,
+        frame: np.ndarray,
+        hand_results: list[HandResult],
+    ) -> bool:
+        """Detect clasped hands and draw an Interlocked label when both overlap."""
+        if len(hand_results) < 2:
+            return False
+
+        frame_width = max(frame.shape[1], 1)
+        wrist_a = hand_results[0].landmarks[WRIST]
+        wrist_b = hand_results[1].landmarks[WRIST]
+        wrist_dist = math.dist((wrist_a.x, wrist_a.y), (wrist_b.x, wrist_b.y)) / frame_width
+        if wrist_dist < INTERLOCKED_WRIST_MIN or wrist_dist >= INTERLOCKED_WRIST_THRESHOLD:
+            return False
+
+        overlap_ratio = self._bounding_box_overlap_ratio(
+            hand_results[0].landmarks,
+            hand_results[1].landmarks,
+        )
+        if overlap_ratio <= INTERLOCKED_OVERLAP_THRESHOLD:
+            return False
+
+        self._draw_interlocked_label(
+            frame,
+            (wrist_a.x + wrist_b.x) // 2,
+            (wrist_a.y + wrist_b.y) // 2,
+        )
+        return True
+
     def draw_volume_bridge(
         self,
         frame: np.ndarray,
@@ -125,6 +184,10 @@ class HandTracker:
 
         if hand_results[0].gesture != "Pinch" or hand_results[1].gesture != "Pinch":
             return None
+
+        for hand in (hand_results[0], hand_results[1]):
+            if any(hand.finger_states.get(finger) for finger in NON_PINCH_FINGERS):
+                return None
 
         point_a = self._pinch_midpoint(hand_results[0].landmarks)
         point_b = self._pinch_midpoint(hand_results[1].landmarks)
@@ -150,15 +213,72 @@ class HandTracker:
         index = landmarks[INDEX_TIP]
         return ((thumb.x + index.x) // 2, (thumb.y + index.y) // 2)
 
+    def _bounding_box_overlap_ratio(
+        self,
+        landmarks_a: list[LandmarkPoint],
+        landmarks_b: list[LandmarkPoint],
+    ) -> float:
+        """Return overlap area divided by the smaller hand bounding box area."""
+        ax1, ay1, ax2, ay2 = self._landmark_bounding_box(landmarks_a)
+        bx1, by1, bx2, by2 = self._landmark_bounding_box(landmarks_b)
+
+        overlap_width = max(0, min(ax2, bx2) - max(ax1, bx1))
+        overlap_height = max(0, min(ay2, by2) - max(ay1, by1))
+        overlap_area = overlap_width * overlap_height
+
+        area_a = max(1, (ax2 - ax1) * (ay2 - ay1))
+        area_b = max(1, (bx2 - bx1) * (by2 - by1))
+        return overlap_area / min(area_a, area_b)
+
+    def _landmark_bounding_box(
+        self,
+        landmarks: list[LandmarkPoint],
+    ) -> tuple[int, int, int, int]:
+        xs = [point.x for point in landmarks]
+        ys = [point.y for point in landmarks]
+        return min(xs), min(ys), max(xs), max(ys)
+
+    def _draw_interlocked_label(
+        self,
+        frame: np.ndarray,
+        center_x: int,
+        center_y: int,
+    ) -> None:
+        label = "Interlocked"
+        font = cv2.FONT_HERSHEY_SIMPLEX
+        scale = 1.0
+        thickness = 2
+        (text_width, text_height), baseline = cv2.getTextSize(label, font, scale, thickness)
+
+        x = center_x - text_width // 2
+        y = center_y + text_height // 2
+        cv2.rectangle(
+            frame,
+            (x - 12, y - text_height - 12),
+            (x + text_width + 12, y + baseline + 12),
+            (0, 0, 0),
+            -1,
+        )
+        cv2.putText(
+            frame,
+            label,
+            (x, y),
+            font,
+            scale,
+            (255, 255, 255),
+            thickness,
+            cv2.LINE_AA,
+        )
+
     def _create_landmarker(self) -> HandLandmarker:
         model_path = self._ensure_model()
         options = HandLandmarkerOptions(
             base_options=BaseOptions(model_asset_path=str(model_path)),
             running_mode=VisionTaskRunningMode.VIDEO,
             num_hands=2,
-            min_hand_detection_confidence=0.6,
-            min_hand_presence_confidence=0.6,
-            min_tracking_confidence=0.5,
+            min_hand_detection_confidence=self._detection_confidence,
+            min_hand_presence_confidence=self._presence_confidence,
+            min_tracking_confidence=self._tracking_confidence,
         )
         return HandLandmarker.create_from_options(options)
 
