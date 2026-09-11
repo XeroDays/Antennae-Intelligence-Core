@@ -19,7 +19,7 @@ MIDDLE_MCP = 9
 THUMB_TIP = 4
 INDEX_TIP = 8
 
-PINCH_THRESHOLD = 0.06
+DEFAULT_PINCH_THRESHOLD = 0.09
 
 
 @dataclass(frozen=True)
@@ -39,6 +39,13 @@ class FingerState:
 
 class GestureDetector:
     """Detect finger states and named gestures from normalized landmarks."""
+
+    def __init__(self, pinch_threshold: float = DEFAULT_PINCH_THRESHOLD) -> None:
+        self.pinch_threshold = pinch_threshold
+
+    def set_pinch_threshold(self, value: float) -> None:
+        """Update the max thumb-index distance that counts as a pinch."""
+        self.pinch_threshold = max(0.01, min(0.30, value))
 
     def get_finger_states(
         self,
@@ -116,4 +123,4 @@ class GestureDetector:
         thumb = landmarks[THUMB_TIP]
         index = landmarks[INDEX_TIP]
         distance = math.dist((thumb.x, thumb.y), (index.x, index.y))
-        return distance < PINCH_THRESHOLD
+        return distance < self.pinch_threshold

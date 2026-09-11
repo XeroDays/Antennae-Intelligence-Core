@@ -9,6 +9,7 @@ import cv2
 import numpy as np
 from PIL import Image, ImageTk
 
+from gesture_detector import DEFAULT_PINCH_THRESHOLD
 from hand_tracker import HandTracker
 from volume_controller import VolumeController
 
@@ -64,6 +65,25 @@ class HandGestureApp(tk.Tk):
         quality_dropdown.pack(side=tk.LEFT, padx=(8, 0))
         quality_dropdown.bind("<<ComboboxSelected>>", self._on_quality_changed)
 
+        ttk.Label(toolbar, text="Pinch Threshold:").pack(side=tk.LEFT, padx=(16, 0))
+
+        self.pinch_threshold_var = tk.DoubleVar(value=DEFAULT_PINCH_THRESHOLD)
+        pinch_scale = ttk.Scale(
+            toolbar,
+            from_=0.02,
+            to=0.20,
+            orient=tk.HORIZONTAL,
+            variable=self.pinch_threshold_var,
+            length=120,
+            command=self._on_pinch_threshold_changed,
+        )
+        pinch_scale.pack(side=tk.LEFT, padx=(8, 0))
+
+        self.pinch_label_var = tk.StringVar(value=f"{DEFAULT_PINCH_THRESHOLD:.2f}")
+        ttk.Label(toolbar, textvariable=self.pinch_label_var, width=5).pack(
+            side=tk.LEFT, padx=(4, 0)
+        )
+
         self.status_var = tk.StringVar(value="Starting camera...")
         ttk.Label(toolbar, textvariable=self.status_var).pack(side=tk.RIGHT)
 
@@ -73,6 +93,11 @@ class HandGestureApp(tk.Tk):
 
     def _on_quality_changed(self, _event=None) -> None:
         self._apply_camera_quality(self.quality_var.get())
+
+    def _on_pinch_threshold_changed(self, _value: str | None = None) -> None:
+        value = round(self.pinch_threshold_var.get(), 2)
+        self.pinch_label_var.set(f"{value:.2f}")
+        self.tracker.set_pinch_threshold(value)
 
     def _apply_camera_quality(self, selection: str) -> None:
         width, height = QUALITY_OPTIONS.get(selection, (1280, 720))

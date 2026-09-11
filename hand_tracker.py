@@ -20,16 +20,13 @@ from mediapipe.tasks.python.vision.hand_landmarker import (
     HandLandmarksConnections,
 )
 
-from gesture_detector import FINGER_NAMES, GestureDetector
+from gesture_detector import FINGER_NAMES, INDEX_TIP, THUMB_TIP, GestureDetector
 
 MODEL_URL = (
     "https://storage.googleapis.com/mediapipe-models/"
     "hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task"
 )
 MODEL_PATH = Path(__file__).resolve().parent / "models" / "hand_landmarker.task"
-
-INDEX_FINGER_TIP = 8
-
 
 @dataclass
 class LandmarkPoint:
@@ -57,6 +54,10 @@ class HandTracker:
 
     def close(self) -> None:
         self._landmarker.close()
+
+    def set_pinch_threshold(self, value: float) -> None:
+        """Update pinch detection sensitivity."""
+        self._detector.set_pinch_threshold(value)
 
     def process(self, frame: np.ndarray) -> list[HandResult]:
         """Detect hands in a BGR frame and return landmark/gesture results."""
@@ -118,14 +119,15 @@ class HandTracker:
         frame: np.ndarray,
         hand_results: list[HandResult],
     ) -> float | None:
-        """Draw a white line between index fingertips and return raw normalised distance."""
+        """Draw volume line between pinch midpoints when both hands are pinching."""
         if len(hand_results) < 2:
             return None
 
-        tip_a = hand_results[0].landmarks[INDEX_FINGER_TIP]
-        tip_b = hand_results[1].landmarks[INDEX_FINGER_TIP]
-        point_a = (tip_a.x, tip_a.y)
-        point_b = (tip_b.x, tip_b.y)
+        if hand_results[0].gesture != "Pinch" or hand_results[1].gesture != "Pinch":
+            return None
+
+        point_a = self._pinch_midpoint(hand_results[0].landmarks)
+        point_b = self._pinch_midpoint(hand_results[1].landmarks)
 
         cv2.line(frame, point_a, point_b, (255, 255, 255), 3, cv2.LINE_AA)
         cv2.circle(frame, point_a, 8, (255, 255, 255), -1, cv2.LINE_AA)
@@ -141,6 +143,12 @@ class HandTracker:
         pixel_dist = math.dist(point_a, point_b)
         normalized_dist = pixel_dist / frame_width
         return max(0.0, min(1.0, normalized_dist))
+
+    def _pinch_midpoint(self, landmarks: list[LandmarkPoint]) -> tuple[int, int]:
+        """Return the midpoint between thumb tip and index tip for a pinch."""
+        thumb = landmarks[THUMB_TIP]
+        index = landmarks[INDEX_TIP]
+        return ((thumb.x + index.x) // 2, (thumb.y + index.y) // 2)
 
     def _create_landmarker(self) -> HandLandmarker:
         model_path = self._ensure_model()
